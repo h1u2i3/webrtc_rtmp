@@ -10,6 +10,7 @@ module WebrtcRtmp
   class Worker
     include WebrtcRtmp::Helper
 
+    attr_reader :running
     attr_accessor :stream_id, :audio_port, :video_port, :pid
 
     # find a worker by the stream_id, if the worker still exist
@@ -29,21 +30,57 @@ module WebrtcRtmp
       @stream_id, @server_ip, @audio_port, @video_port = stream_id, server_ip, audio_port, video_port
     end
 
-    def start_stream
-      if @container.resource_available?
-        @stream = Tempfile.new([@stream_id, '.sdp'])
-        @stream.write(FFmpegBuilder.new(@server_ip, @audio_port, @video_port).gen_sdp)
-        @pid = Command.run("ffmpeg -r 25  -i #{@stream.path} -c copy -f flv rtmp://localhost/live/#{@stream_id}")
+    def start_stream(logger)
+      if @container.resource_available?(@audio_port, @video_port)
+        prepare_sdp
+
+        # just a simple way to do the system command
+        command = <<~EOF
+          ffmpeg -r 25 \
+          -loglevel quiet \
+          -protocol_whitelist 'file,udp,sdp,rtp' \
+          -i #{@stream.path} \
+          -c copy -f flv \
+          rtmp://localhost/live/#{@stream_id}
+        EOF
+
+        @pid = Command.run(command, log: logger)
+        @logger = logger
+        @running = true
         @container.add_worker(self)
+
+        # just return self
+        self
       else
         raise(ArgumentError, "The audio or video resource is unavailable")
       end
     end
 
+    # simple stop method
     def stop_stream
       Process.kill(:SIGINT, @pid)
+      @running = false
       @stream.unlink
-      @containter.remove_worker(self)
+      @container.remove_worker(self)
     end
+
+    # just implement a simple restart method
+    def restart_stream
+      stop_stream
+      start_stream(@logger || "/dev/null")
+    end
+
+    # is_running check
+    def is_running?
+      @running
+    end
+
+    private
+
+      def prepare_sdp
+        @stream = Tempfile.new([@stream_id, '.sdp'])
+        @stream.write(FFmpegBuilder.new(@server_ip, @audio_port, @video_port).gen_sdp)
+        @stream.rewind
+      end
   end
 end

@@ -13,7 +13,7 @@ module WebrtcRtmp
     end
 
     def gen_sdp
-      sdp_content = <<-EOF
+      <<~EOF
         v=0
         o=- 2 2 IN IP4 #{@ip}
         s=Nginx Media Server
